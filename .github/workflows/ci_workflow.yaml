@@ -41,17 +41,36 @@ jobs:
 
       - name: Run MLflow Project (Retraining)
         id: mlflow_run 
+        shell: bash -l {0} 
         run: |
+          # Dapatkan nama environment dari conda.yaml (jika ada) atau gunakan 'base'
+          ENV_NAME=$(head -n 1 MLProject/conda.yaml | cut -d' ' -f2)
+          if [ -z "$ENV_NAME" ]; then
+            ENV_NAME=base # Fallback ke base jika nama tidak ditemukan
+          fi
+          echo "Activating Conda environment: $ENV_NAME"
+          conda activate "$ENV_NAME" # Aktifkan environment
+
+          echo "Running MLflow project..."
           # Jalankan MLflow dari root, target folder MLProject
           # Tangkap output untuk mendapatkan Run ID
           mlflow run ./MLProject -e main > mlflow_run_output.txt
           cat mlflow_run_output.txt # Tampilkan output log
+          
           # Ambil Run ID (baris terakhir output modelling.py)
           RUN_ID=$(grep 'Retraining Run ID:' mlflow_run_output.txt | awk '{print $NF}')
-          # Alternatif jika output hanya run id: RUN_ID=$(tail -n 1 mlflow_run_output.txt)
           if [ -z "$RUN_ID" ]; then
-            echo "::error::Could not extract MLflow Run ID from output."
-            exit 1
+            echo "::warning::Could not extract MLflow Run ID using grep. Trying tail..."
+            RUN_ID=$(tail -n 1 mlflow_run_output.txt | awk '{print $NF}') # Coba ambil baris terakhir
+             if [[ ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then # Validasi sederhana Run ID
+               echo "::error::Extracted RUN_ID '$RUN_ID' does not look valid."
+               # Coba cari di log lengkap
+               RUN_ID=$(grep -o '[a-f0-9]\{32\}' mlflow_run_output.txt | tail -n 1)
+               if [[ ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then
+                  echo "::error::Could not find a valid MLflow Run ID in the output."
+                  exit 1
+               fi
+             fi
           fi
           echo "MLFLOW_RUN_ID=$RUN_ID" >> $GITHUB_ENV
           echo "Detected Retraining Run ID: $RUN_ID"
