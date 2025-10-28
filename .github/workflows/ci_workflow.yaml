@@ -1,0 +1,48 @@
+name: MLflow Project CI - Diabetes Retraining
+
+on:
+  push:
+    branches: [ main ] 
+    paths: 
+      - 'MLProject/**' 
+      - '.github/workflows/ci_workflow.yaml'
+  workflow_dispatch: 
+
+jobs:
+  run-mlflow-project: 
+    runs-on: ubuntu-latest 
+    
+    defaults:
+      run:
+        working-directory: ./MLProject
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: 3.12 
+
+
+      - name: Check Conda Environment 
+        run: |
+          conda info --envs
+          conda list # Lihat paket yang terinstal
+
+  
+      - name: Set up MLflow environment variables
+        env:
+          # Ambil username DagsHub dari GitHub Secrets
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }} 
+          # Ambil token DagsHub dari GitHub Secrets
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }} 
+          # Set MLFLOW_TRACKING_URI secara eksplisit 
+          MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow 
+        run: |
+          # Export variabel agar bisa dibaca oleh MLflow Client di skrip Python
+          echo "DAGSHUB_USER_NAME=${DAGSHUB_USERNAME}" >> $GITHUB_ENV
+          echo "MLFLOW_TRACKING_USERNAME=${DAGSHUB_USERNAME}" >> $GITHUB_ENV
+          echo "MLFLOW_TRACKING_PASSWORD=${DAGSHUB_TOKEN}" >>

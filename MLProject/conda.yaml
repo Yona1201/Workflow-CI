@@ -1,0 +1,14 @@
+name: msml_project_env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.12 
+  - pip
+  - pip:
+    - mlflow==2.19.0
+    - pandas
+    - numpy
+    - scikit-learn
+    - matplotlib
+    - dagshub 
