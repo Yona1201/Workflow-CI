@@ -177,5 +177,5 @@ if __name__ == "__main__":
         # 3. Call training function (versi autolog)
         trained_model = train_and_log_model_autolog(X_train, y_train, X_test, y_test, best_retrain_params)
         
-        print(f"Final Run ID: {ci_run.info.run_id}")
         print("\n--- CI Automated Retraining Complete ---", file=sys.stderr)
+        print(f"Retraining Run ID: {ci_run.info.run_id}")

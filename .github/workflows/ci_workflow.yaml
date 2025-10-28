@@ -1,41 +1,43 @@
-name: MLflow Project CI - Diabetes Retraining & Docker Build
+name: MLflow Project CI - Diabetes Retraining
 
 on:
   push:
     branches: [ main ] 
-    paths:
+    paths: 
       - 'MLProject/**' 
       - '.github/workflows/ci_workflow.yaml'
   workflow_dispatch: 
 
 jobs:
-  run-mlflow-project-and-build-docker: 
-    runs-on: ubuntu-latest
+  run-mlflow-project: 
+    runs-on: ubuntu-latest 
     
+    defaults:
+      run:
+        working-directory: ./MLProject
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Miniconda and Environment
+      - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
-          python-version: 3.12
-          environment-file: MLProject/conda.yaml 
-          activate-environment: msml_project_env 
-          auto-activate-base: false
+          python-version: 3.12 
 
-      - name: Check Conda Environment
-        shell: bash -l {0} 
+
+      - name: Check Conda Environment 
         run: |
           conda info --envs
-          mlflow --version
+          conda list # Lihat paket yang terinstal
+
 
       - name: Set up MLflow environment variables
         env:
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }} 
           DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }} 
-          MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow 
+          MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow
         run: |
           echo "Setting MLflow environment variables..."
           echo "DAGSHUB_USER_NAME=${DAGSHUB_USERNAME}" >> $GITHUB_ENV
@@ -43,59 +45,3 @@ jobs:
           echo "MLFLOW_TRACKING_PASSWORD=${DAGSHUB_TOKEN}" >> $GITHUB_ENV
           echo "MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}" >> $GITHUB_ENV
           echo "Env vars set."
-
-      - name: Run MLflow Project (Retraining)
-        id: mlflow_run
-        shell: bash -l {0}
-        run: |
-          echo "Running MLflow project..."
-          # Jalankan mlflow run, redirect stdout dan stderr ke file
-          mlflow run ./MLProject -e main > mlflow_run_output.txt 2>&1
-          
-          echo "--- Full MLProject Log ---"
-          cat mlflow_run_output.txt
-          echo "--------------------------"
-
-          # Ekstraksi RUN_ID: Ambil baris terakhir yang mengandung 32 karakter hex (Run ID)
-          # Ini mengandalkan print(f"Final Run ID: {ci_run.info.run_id}") di modelling.py
-          RUN_ID=$(grep 'Final Run ID:' mlflow_run_output.txt | awk '{print $NF}')
-          
-          # Validasi Run ID
-          if [[ -z "$RUN_ID" || ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then
-            echo "::error::Could not extract a valid MLflow Run ID from the script output."
-            echo "::error::Retraining script likely failed. Check log above for Python Traceback."
-            exit 1
-          fi
-          
-          # Simpan RUN_ID untuk langkah selanjutnya
-          echo "MLFLOW_RUN_ID=$RUN_ID" >> $GITHUB_ENV
-          echo "Successfully Detected Retraining Run ID: $RUN_ID"
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build Docker Image with MLflow
-        shell: bash -l {0} 
-        env:
-           MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow
-           MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
-           MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
-           MLFLOW_RUN_ID_FROM_STEP: ${{ env.MLFLOW_RUN_ID }} 
-        run: |
-          echo "Building Docker image for MLflow Run ID: ${MLFLOW_RUN_ID_FROM_STEP}"
-          # Format Image Name: <DOCKERHUB_USERNAME>/<NAMA_MODEL>:<TAG>
-          IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/diabetes-msml-proyek:latest" 
-          MODEL_URI="runs:/${MLFLOW_RUN_ID_FROM_STEP}/model"
-          echo "Using Model URI: ${MODEL_URI}"
-          # Build Docker
-          mlflow models build-docker --model-uri "${MODEL_URI}" --name "${IMAGE_NAME}" --enable-mlserver
-          # Simpan nama image untuk langkah push
-          echo "DOCKER_IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
-
-      - name: Push Docker Image
-        run: |
-          echo "Pushing image: ${{ env.DOCKER_IMAGE_NAME }}"
-          docker push ${{ env.DOCKER_IMAGE_NAME }}
