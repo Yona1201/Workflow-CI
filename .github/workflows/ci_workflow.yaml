@@ -1,186 +1,105 @@
-name: CI/CD MLflow Pipeline - Auto Retrain & Deploy 
+# File: ci_workflow.yaml (Advanced - Final Version with Docker & Syntax Fix)
+name: MLflow Project CI - Diabetes Retraining & Docker Build
 
 on:
   push:
-    branches:
-      - main # Trigger saat push ke main
-    paths: # Hanya jika file di MLProject atau workflow berubah
-      - 'MLProject/**'
+    branches: [ main ] 
+    paths:
+      - 'MLProject/**' 
       - '.github/workflows/ci_workflow.yaml'
-  workflow_dispatch: # Izinkan manual run
-
-env: # Variabel environment global untuk workflow
-  MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow
-  MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }} 
-  MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }} 
-  DOCKER_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-  DOCKER_PASSWORD: ${{ secrets.DOCKERHUB_TOKEN }}   
-  DOCKER_REPO: yona1201/diabetes-msml-proyek 
+  workflow_dispatch: 
 
 jobs:
-  build-and-deploy:
+  run-mlflow-project-and-build-docker: 
     runs-on: ubuntu-latest
-
+    
     steps:
-      # 1. Checkout Kode
-      - name: Checkout Repository
+      # Langkah 1: Checkout kode
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: true # Aktifkan LFS jika model disimpan di Git LFS
 
-      # 2. Setup Python (Tidak perlu, karena conda akan handle)
-      # - name: Set up Python 3.12
-      #   uses: actions/setup-python@v5
-      #   with:
-      #     python-version: '3.12'
-
-      # 3. Setup Miniconda
-      - name: Setup Conda Environment
+      # Langkah 2: Setup Miniconda & Environment
+      - name: Set up Miniconda and Environment
         uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
-          python-version: 3.12 # Tetap tentukan versi Python dasar
-          # environment-file: MLProject/conda.yaml # Kita akan buat env manual
-          activate-environment: mlflow-env # Nama env yang akan kita buat & aktifkan
+          python-version: 3.12
+          environment-file: MLProject/conda.yaml 
+          activate-environment: msml_project_env 
           auto-activate-base: false
 
-      # 4. Check Env (Opsional)
-      - name: Check Env
-        shell: bash -l {0} # Shell login diperlukan untuk conda
+      # Langkah 3: Set DagsHub/MLflow Environment Variables
+      - name: Set up MLflow environment variables
+        env:
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }} 
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }} 
+          # Sesuaikan URL DagsHub Anda
+          MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow 
         run: |
-          conda info --envs
-          python --version
-          mlflow --version # Seharusnya belum ada di sini
+          echo "Setting MLflow environment variables..."
+          echo "DAGSHUB_USER_NAME=${DAGSHUB_USERNAME}" >> $GITHUB_ENV
+          echo "MLFLOW_TRACKING_USERNAME=${DAGSHUB_USERNAME}" >> $GITHUB_ENV
+          echo "MLFLOW_TRACKING_PASSWORD=${DAGSHUB_TOKEN}" >> $GITHUB_ENV
+          echo "MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}" >> $GITHUB_ENV
+          echo "Env vars set."
 
-      # 5. Install Git LFS (jika model disimpan di LFS)
-      - name: Install Git LFS
+      # Langkah 4: Run MLflow Project (Retraining) - Mendapatkan Run ID
+      - name: Run MLflow Project (Retraining)
+        id: mlflow_run
+        shell: bash -l {0} 
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git-lfs
-          git lfs install
-
-      # 6. Create Conda Environment dari file
-      #    Pindah working directory ke MLProject
-      - name: Create Conda Environment
-        working-directory: MLProject # Jalankan di dalam folder MLProject
-        shell: bash -l {0}
-        run: |
-          echo "Creating/Updating Conda environment 'mlflow-env'..."
-          # Coba update dulu, jika gagal baru create
-          conda env update -f conda.yaml --name mlflow-env || conda env create -f conda.yaml --name mlflow-env
-          echo "Environment created/updated."
-
-      # 7. Install Python dependencies (jika ada requirements.txt)
-      #    Di dalam environment yang baru dibuat
-      - name: Install Python dependencies (Optional: if requirements.txt exists)
-        working-directory: MLProject
-        shell: bash -l {0}
-        run: |
-          conda activate mlflow-env
-          if [ -f requirements.txt ]; then
-            echo "Installing dependencies from requirements.txt..."
-            pip install -r requirements.txt
-          else
-            echo "requirements.txt not found, skipping pip install step."
-          fi
-          # Pastikan mlflow terinstall dari conda.yaml atau di sini
-          pip install mlflow # Pastikan mlflow CLI ada
-
-      # 8. Run MLflow Project (Retraining)
-      #    Pastikan environment aktif dan variabel MLflow diset
-      - name: Run MLflow Project
-        id: run_mlflow_project # ID untuk langkah ini
-        working-directory: MLProject # Jalankan dari dalam MLProject
-        shell: bash -l {0}
-        env: # Env vars khusus untuk step ini (diambil dari env global)
-          MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
-          MLFLOW_TRACKING_USERNAME: ${{ env.MLFLOW_TRACKING_USERNAME }}
-          MLFLOW_TRACKING_PASSWORD: ${{ env.MLFLOW_TRACKING_PASSWORD }}
-        run: |
-          conda activate mlflow-env
           echo "Running MLflow project..."
-          # Jalankan 'mlflow run .' (titik artinya direktori saat ini)
-          # Redirect output ke file log
-          mlflow run . --experiment-name "Diabetes_Prediction_CI_Retraining" > ../mlflow_run_output.log 2>&1
-          # Tampilkan log untuk debug
-          echo "--- MLflow Run Log ---"
-          cat ../mlflow_run_output.log
-          echo "----------------------"
-          # Cek exit code mlflow run
-          if [ $? -ne 0 ]; then
-             echo "::error::MLflow Run failed. Check log above for Python errors."
-             exit 1
-          fi
-
-      # 9. Get latest MLflow run_id (Modifikasi Ekstraksi)
-      - name: Get latest MLflow run_id
-        id: get_model_run_id_for_deploy
-        # Jalankan dari root repo untuk akses mudah ke log
-        working-directory: ${{ github.workspace }} 
-        shell: bash -l {0}
-        run: |
-          echo "Extracting Run ID from mlflow_run_output.log..."
-          # Cari baris "Final Run ID: ..." yang dicetak skrip Python
-          RUN_ID=$(grep 'Final Run ID:' mlflow_run_output.log | awk '{print $NF}')
+          mlflow run ./MLProject -e main > mlflow_run_output.txt 2>&1
           
+          echo "--- Full MLProject Log ---"
+          cat mlflow_run_output.txt
+          echo "--------------------------"
+
+          # Ekstraksi RUN_ID
+          RUN_ID=$(grep 'Final Run ID:' mlflow_run_output.txt | awk '{print $NF}')
+          
+          # Validasi Run ID
           if [[ -z "$RUN_ID" || ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then
-            echo "::error::Could not extract a valid MLflow Run ID from the script output."
-            echo "Last 10 lines of log:"
-            tail -n 10 mlflow_run_output.log
+            echo "::error::Could not extract a valid MLflow Run ID."
+            echo "::error::Check log above for FATAL PYTHON ERROR (Traceback)."
             exit 1
           fi
-          echo "Extracted MLflow Run ID: $RUN_ID"
-          echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV # Simpan ke environment workflow
+          
+          echo "MLFLOW_RUN_ID=$RUN_ID" >> $GITHUB_ENV
+          echo "Successfully Detected Retraining Run ID: $RUN_ID"
 
-      # 10. Upload Model ke GitHub LFS (jika digunakan)
-      #     Folder 'model/' dibuat oleh modelling.py di root repo
-      - name: Upload Model to GitHub LFS (Optional)
-        # working-directory default (root)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Token bawaan GitHub Actions
-        run: |
-          if [ -d "model" ]; then
-            echo "Model directory found, attempting to push to LFS..."
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
-            git config --global user.name "github-actions[bot]"
-            git lfs track "model/**" # Pastikan LFS melacak folder model
-            git add .gitattributes model/
-            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
-            # Cek apakah ada perubahan
-            if ! git diff-index --quiet HEAD -- model/ .gitattributes; then
-              git commit -m "chore: Update retrained model artifact via CI"
-              git push origin HEAD:${{ github.ref }} # Push ke branch yang sama
-              echo "Successfully pushed retrained model to GitHub LFS."
-            else
-              echo "No new model changes to commit to GitHub LFS."
-            fi
-          else
-            echo "Warning: 'model/' directory not found. Skipping LFS upload."
-          fi
+      # --- Langkah ADVANCED (Docker) ---
 
-      # 11. Build Docker Image (Menggunakan model dari LFS/lokal)
-      - name: Build Docker Image
-        # working-directory default (root)
-        shell: bash -l {0}
-        run: |
-          conda activate mlflow-env # Pastikan mlflow command ada
-          echo "Building Docker image using local model directory..."
-          # --model-uri "model" menunjuk ke folder 'model/' di root repo
-          mlflow models build-docker \
-            --model-uri "model" \
-            --name "${{ env.DOCKER_REPO }}" \
-            --enable-mlserver
-          echo "Docker image built: ${{ env.DOCKER_REPO }}:latest"
-
-      # 12. Log in to Docker Hub
+      # Langkah 5: Login ke Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ env.DOCKER_USERNAME }} # Ambil dari env global
-          password: ${{ env.DOCKER_PASSWORD }} # Ambil dari env global
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 13. Push Docker Image
-      - name: Push Docker Image
+      # Langkah 6: Build Docker Image using MLflow
+      - name: Build Docker Image with MLflow
+        shell: bash -l {0} 
+        env:
+           # Variabel MLflow
+           MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow # Sesuaikan
+           MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+           MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+           MLFLOW_RUN_ID_FROM_STEP: ${{ env.MLFLOW_RUN_ID }} 
+           # --- PERBAIKAN: Tambahkan DOCKERHUB_USERNAME ke env ---
+           DOCKERHUB_USERNAME_SECRET: ${{ secrets.DOCKERHUB_USERNAME }} 
         run: |
-          echo "Pushing Docker image: ${{ env.DOCKER_REPO }}:latest"
-          docker push "${{ env.DOCKER_REPO }}":latest
+          echo "Building Docker image for MLflow Run ID: ${MLFLOW_RUN_ID_FROM_STEP}"
+          # --- PERBAIKAN: Gunakan variabel env $DOCKERHUB_USERNAME_SECRET ---
+          IMAGE_NAME="${DOCKERHUB_USERNAME_SECRET}/diabetes-msml-proyek:latest" # Sesuaikan nama image jika perlu
+          # -------------------------------------------------------------------
+          MODEL_URI="runs:/${MLFLOW_RUN_ID_FROM_STEP}/model"
+          echo "Using Model URI: ${MODEL_URI}"
+          # Build Docker
+          mlflow models build-docker --model-uri "${MODEL_URI}" --name "${IMAGE_NAME}" --enable-mlserver
+          # Simpan nama image untuk langkah push
+          echo "DOCKER_IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+
+      # Langkah 7: Push Docker Image ke Docker Hub
+      - name: Push Docker Image
+        run: docker push ${{ env.DOCKER_IMAGE_NAME }}
