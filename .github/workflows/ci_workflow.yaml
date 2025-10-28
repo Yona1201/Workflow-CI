@@ -9,27 +9,36 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-mlflow-project-and-build-docker: 
+  run-mlflow-project-and-build-docker:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Miniconda
+      - name: Set up Miniconda and Environment
         uses: conda-incubator/setup-miniconda@v3
         with:
           auto-update-conda: true
-          python-version: 3.12 
+          python-version: 3.12
+          environment-file: MLProject/conda.yaml
+          activate-environment: msml_project_env
+          auto-activate-base: false
 
-      - name: Create/Update Conda Environment from File
-        run: conda env update --file MLProject/conda.yaml --name base
-
+      - name: Check Conda Environment (Optional)
+        shell: bash -l {0} 
+        run: |
+          echo "Current Conda environment:"
+          conda info --envs # Harus menunjukkan msml_project_env aktif (*)
+          echo "Python version:"
+          python --version
+          echo "MLflow version:"
+          mlflow --version # Cek apakah mlflow command ada di PATH
 
       - name: Set up MLflow environment variables
         env:
-          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }} 
-          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }} 
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
           MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow 
         run: |
           echo "Setting MLflow environment variables..."
@@ -40,48 +49,47 @@ jobs:
           echo "Env vars set."
 
       - name: Run MLflow Project (Retraining)
-        id: mlflow_run 
-        shell: bash -l {0} 
+        id: mlflow_run
+        shell: bash -l {0}
         run: |
-          # Dapatkan nama environment dari conda.yaml (jika ada) atau gunakan 'base'
-          ENV_NAME=$(head -n 1 MLProject/conda.yaml | cut -d' ' -f2)
-          if [ -z "$ENV_NAME" ]; then
-            ENV_NAME=base # Fallback ke base jika nama tidak ditemukan
-          fi
-          echo "Activating Conda environment: $ENV_NAME"
-          conda activate "$ENV_NAME" # Aktifkan environment
-
           echo "Running MLflow project..."
-          # Jalankan MLflow dari root, target folder MLProject
-          # Tangkap output untuk mendapatkan Run ID
+          # Jalankan mlflow run (seharusnya sudah ada di PATH)
+          # Targetnya adalah folder ./MLProject relatif dari root
           mlflow run ./MLProject -e main > mlflow_run_output.txt
-          cat mlflow_run_output.txt # Tampilkan output log
-          
-          # Ambil Run ID (baris terakhir output modelling.py)
+          # Tampilkan log dari mlflow run
+          cat mlflow_run_output.txt
+
+          # Ekstraksi RUN_ID (lebih robust)
           RUN_ID=$(grep 'Retraining Run ID:' mlflow_run_output.txt | awk '{print $NF}')
           if [ -z "$RUN_ID" ]; then
-            echo "::warning::Could not extract MLflow Run ID using grep. Trying tail..."
-            RUN_ID=$(tail -n 1 mlflow_run_output.txt | awk '{print $NF}') # Coba ambil baris terakhir
-             if [[ ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then # Validasi sederhana Run ID
-               echo "::error::Extracted RUN_ID '$RUN_ID' does not look valid."
-               # Coba cari di log lengkap
+            echo "::warning::Could not extract Run ID using grep. Trying tail..."
+            RUN_ID=$(tail -n 1 mlflow_run_output.txt | awk '{print $NF}') # Coba ambil baris terakhir jika format output berbeda
+             # Validasi sederhana format Run ID (32 karakter hex)
+             if [[ ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then
+               echo "::error::Extracted RUN_ID '$RUN_ID' does not look like a valid MLflow Run ID. Checking full log..."
+               # Coba cari pola hex 32 digit di seluruh log
                RUN_ID=$(grep -o '[a-f0-9]\{32\}' mlflow_run_output.txt | tail -n 1)
                if [[ ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then
                   echo "::error::Could not find a valid MLflow Run ID in the output."
+                  # Tampilkan beberapa baris terakhir log untuk debug
+                  echo "Last 5 lines of output:"
+                  tail -n 5 mlflow_run_output.txt
                   exit 1
                fi
              fi
           fi
+          # Simpan RUN_ID untuk langkah selanjutnya
           echo "MLFLOW_RUN_ID=$RUN_ID" >> $GITHUB_ENV
           echo "Detected Retraining Run ID: $RUN_ID"
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3 
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker Image with MLflow
+        shell: bash -l {0}
         env:
            MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow 
            MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
@@ -89,14 +97,12 @@ jobs:
            MLFLOW_RUN_ID_FROM_STEP: ${{ env.MLFLOW_RUN_ID }} 
         run: |
           echo "Building Docker image for MLflow Run ID: ${MLFLOW_RUN_ID_FROM_STEP}"
-          # Ganti DOCKERHUB_USERNAME/IMAGE_NAME:TAG 
-          # Contoh: yona1201/diabetes-model:latest
-          IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/diabetes-msml-proyek:latest" # Ganti 'diabetes-msml-proyek' jika mau
-          # URI model adalah runs:/<RUN_ID>/model
+          IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/diabetes-msml-proyek:latest" # Sesuaikan nama image jika perlu
           MODEL_URI="runs:/${MLFLOW_RUN_ID_FROM_STEP}/model"
           echo "Using Model URI: ${MODEL_URI}"
-          # --enable-mlserver penting untuk Kriteria 4
-          mlflow models build-docker --model-uri "${MODEL_URI}" --name "${IMAGE_NAME}" --enable-mlserver 
+          # Jalankan build-docker
+          mlflow models build-docker --model-uri "${MODEL_URI}" --name "${IMAGE_NAME}" --enable-mlserver
+          # Simpan nama image untuk langkah push
           echo "DOCKER_IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
 
       - name: Push Docker Image
