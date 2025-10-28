@@ -53,34 +53,25 @@ jobs:
         shell: bash -l {0}
         run: |
           echo "Running MLflow project..."
-          # Jalankan mlflow run (seharusnya sudah ada di PATH)
-          # Targetnya adalah folder ./MLProject relatif dari root
-          mlflow run ./MLProject -e main > mlflow_run_output.txt
-          # Tampilkan log dari mlflow run
+          # Jalankan mlflow run, redirect stdout dan stderr ke file
+          mlflow run ./MLProject -e main > mlflow_run_output.txt 2>&1
+          # Tampilkan log lengkap untuk debug
           cat mlflow_run_output.txt
 
-          # Ekstraksi RUN_ID (lebih robust)
-          RUN_ID=$(grep 'Retraining Run ID:' mlflow_run_output.txt | awk '{print $NF}')
-          if [ -z "$RUN_ID" ]; then
-            echo "::warning::Could not extract Run ID using grep. Trying tail..."
-            RUN_ID=$(tail -n 1 mlflow_run_output.txt | awk '{print $NF}') # Coba ambil baris terakhir jika format output berbeda
-             # Validasi sederhana format Run ID (32 karakter hex)
-             if [[ ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then
-               echo "::error::Extracted RUN_ID '$RUN_ID' does not look like a valid MLflow Run ID. Checking full log..."
-               # Coba cari pola hex 32 digit di seluruh log
-               RUN_ID=$(grep -o '[a-f0-9]\{32\}' mlflow_run_output.txt | tail -n 1)
-               if [[ ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then
-                  echo "::error::Could not find a valid MLflow Run ID in the output."
-                  # Tampilkan beberapa baris terakhir log untuk debug
-                  echo "Last 5 lines of output:"
-                  tail -n 5 mlflow_run_output.txt
-                  exit 1
-               fi
-             fi
+          # Ekstraksi RUN_ID berdasarkan format "Final Run ID: ..."
+          RUN_ID=$(grep 'Final Run ID:' mlflow_run_output.txt | awk '{print $NF}')
+          
+          # Validasi apakah RUN_ID ditemukan dan formatnya benar
+          if [[ -z "$RUN_ID" || ! "$RUN_ID" =~ ^[a-f0-9]{32}$ ]]; then
+            echo "::error::Could not extract a valid MLflow Run ID from the script output."
+            echo "Last 10 lines of output:"
+            tail -n 10 mlflow_run_output.txt # Tampilkan akhir log jika error
+            exit 1
           fi
+          
           # Simpan RUN_ID untuk langkah selanjutnya
           echo "MLFLOW_RUN_ID=$RUN_ID" >> $GITHUB_ENV
-          echo "Detected Retraining Run ID: $RUN_ID"
+          echo "Successfully Detected Retraining Run ID: $RUN_ID"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
