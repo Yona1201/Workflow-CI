@@ -32,17 +32,16 @@ jobs:
           conda info --envs
           conda list # Lihat paket yang terinstal
 
-  
+
       - name: Set up MLflow environment variables
         env:
-          # Ambil username DagsHub dari GitHub Secrets
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }} 
-          # Ambil token DagsHub dari GitHub Secrets
           DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }} 
-          # Set MLFLOW_TRACKING_URI secara eksplisit 
-          MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow 
+          MLFLOW_TRACKING_URI: https://dagshub.com/Yona1201/msml-proyek-briliona.mlflow
         run: |
-          # Export variabel agar bisa dibaca oleh MLflow Client di skrip Python
+          echo "Setting MLflow environment variables..."
           echo "DAGSHUB_USER_NAME=${DAGSHUB_USERNAME}" >> $GITHUB_ENV
           echo "MLFLOW_TRACKING_USERNAME=${DAGSHUB_USERNAME}" >> $GITHUB_ENV
-          echo "MLFLOW_TRACKING_PASSWORD=${DAGSHUB_TOKEN}" >>
+          echo "MLFLOW_TRACKING_PASSWORD=${DAGSHUB_TOKEN}" >> $GITHUB_ENV
+          echo "MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}" >> $GITHUB_ENV
+          echo "Env vars set."
