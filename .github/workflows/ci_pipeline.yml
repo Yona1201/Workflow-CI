@@ -1,0 +1,120 @@
+name: CI/CD MLflow Pipeline - Auto Retrain & Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+  DOCKER_REPO: yona12/proyek_sml_briliona
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Conda Environment
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: '3.12'
+          auto-activate-base: false
+
+      - name: Check Env
+        run: |
+          echo "Current Working Directory: $(pwd)"
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda --version
+          python --version
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y git-lfs
+
+      - name: Create Conda Environment
+        working-directory: MLProject
+        run: |
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda env create -f conda.yaml || conda env update -f conda.yaml
+
+      - name: Install Python dependencies
+        working-directory: MLProject
+        run: |
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda activate mlflow-env
+          pip install -r requirements.txt
+          pip install mlflow  # Ensure mlflow CLI is available
+
+      - name: Run MLflow Project
+        id: run_mlflow_project
+        working-directory: MLProject
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: |
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda activate mlflow-env
+          mlflow run . --experiment-name "Diabetes_Prediction_CI_Retraining" | tee mlflow_run_output.log
+      
+      - name: Get latest MLflow run_id
+        id: get_model_run_id_for_deploy
+        working-directory: MLProject
+        run: |
+          RUN_ID=$(grep -oE '^[a-f0-9]{32}$' mlflow_run_output.log | tail -n 1)
+          echo "Extracted MLflow Run ID: $RUN_ID"
+          echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
+
+      - name: Upload to GitHub LFS
+        working-directory: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git lfs track "model/**"
+          git add .gitattributes || true 
+          git add "model/"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "chore: Pushed retrained model from CI run ${{ github.run_id }}"
+            git push origin HEAD:${{ github.ref }}
+            echo "Successfully pushed retrained model to GitHub LFS."
+          else
+            echo "No new MLflow artifact changes to commit to GitHub LFS."
+          fi
+
+      - name: Build Docker Model
+        working-directory: .
+        run: |
+          source $(conda info --base)/etc/profile.d/conda.sh
+          conda activate mlflow-env
+          mlflow models build-docker \
+            --model-uri "model" \
+            --name "$DOCKER_REPO" \
+            --enable-mlserver
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Tag Docker Image
+        run: echo "Image built and tagged as $DOCKER_REPO:latest"
+
+      - name: Push Docker Image
+        run: docker push "$DOCKER_REPO":latest
