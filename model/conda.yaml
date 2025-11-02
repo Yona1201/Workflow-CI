@@ -1,3 +1,13 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:e26fe4e45ccf081859be6be74281acabc56575958fe81e9a2bcee06ec0155631
-size 212
+channels:
+- conda-forge
+dependencies:
+- python=3.12.11
+- pip<=25.1.1
+- pip:
+  - mlflow==2.22.0
+  - cloudpickle==3.1.1
+  - numpy==2.2.5
+  - pandas==2.2.3
+  - scikit-learn==1.6.1
+  - scipy==1.15.3
+name: mlflow-env

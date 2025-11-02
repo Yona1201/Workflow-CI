@@ -1,3 +1,19 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:5cf6bd603fa21a68456f1984a581c62feed32a9e672d221603372413c746cb66
-size 483
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.11
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.6.1
+mlflow_version: 2.22.0
+model_size_bytes: 10505536
+model_uuid: b5d42a86efed480dabe81c9d94879737
+prompts: null
+utc_time_created: '2025-06-12 15:51:09.766147'
